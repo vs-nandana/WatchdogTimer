@@ -1,0 +1,12 @@
+# Build folders
+Debug/
+Release/
+build/
+
+# Compiled files
+*.o
+*.d
+*.elf
+*.bin
+*.hex
+*.map
