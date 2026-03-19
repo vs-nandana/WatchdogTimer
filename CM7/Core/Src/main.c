@@ -154,7 +154,7 @@ void My_print(char *msg){
       sprintf(msg,"a: %d\r\n",a);
 	  My_print(msg);
 	  HAL_IWDG_Refresh(&hiwdg1);
-	  HAL_Delay(1200);
+	  HAL_Delay(500);
 	  a++;
       sprintf(msg,"a: %d\r\n",a);
 	  My_print(msg);
