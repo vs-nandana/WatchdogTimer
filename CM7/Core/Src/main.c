@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 #include "iwdg.h"
 #include "usart.h"
 #include "gpio.h"
@@ -53,7 +54,11 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+//#define BUTTON_TIMEOUT_MS   5000U
 
+/* LED blink count per button press */
+//#define LED_BLINK_COUNT     5U
+//#define LED_BLINK_PERIOD_MS 200U
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -64,13 +69,14 @@
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
+void MX_FREERTOS_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-
+extern osSemaphoreId_t ButtonSemHandle;
 /* USER CODE END 0 */
 
 /**
@@ -132,7 +138,17 @@ Error_Handler();
 /* USER CODE END Boot_Mode_Sequence_2 */
 
   /* USER CODE BEGIN SysInit */
-
+/* Detect if the last reset was caused by the watchdog */
+if (__HAL_RCC_GET_FLAG(RCC_FLAG_IWDG1RST))
+{
+    __HAL_RCC_CLEAR_RESET_FLAGS();
+    /* Optional: blink error LED fast to signal a WDG reset */
+    for (int i = 0; i < 10; i++)
+    {
+        HAL_GPIO_TogglePin(GPIOB,GPIO_PIN_14 );
+        HAL_Delay(100);
+    }
+}
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -140,24 +156,27 @@ Error_Handler();
   MX_IWDG1_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
-int a=0;
-char msg[20];
-void My_print(char *msg){
-	HAL_UART_Transmit(&huart3,(uint8_t*)msg,strlen(msg),HAL_MAX_DELAY);
-}
+
+  char msg[20];
+  void My_print(char *msg){
+  	HAL_UART_Transmit(&huart3,(uint8_t*)msg,strlen(msg),HAL_MAX_DELAY);
+  }
+  My_print("Restart\r\n");
   /* USER CODE END 2 */
+
+  /* Init scheduler */
+  osKernelInitialize();  /* Call init function for freertos objects (in cmsis_os2.c) */
+  MX_FREERTOS_Init();
+
+  /* Start scheduler */
+  osKernelStart();
+
+  /* We should never get here as control is now taken by the scheduler */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-      sprintf(msg,"a: %d\r\n",a);
-	  My_print(msg);
-	  HAL_IWDG_Refresh(&hiwdg1);
-	  HAL_Delay(500);
-	  a++;
-      sprintf(msg,"a: %d\r\n",a);
-	  My_print(msg);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -217,8 +236,37 @@ void SystemClock_Config(void)
 }
 
 /* USER CODE BEGIN 4 */
-
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+    if (GPIO_Pin == GPIO_PIN_13)
+    {
+        /* osSemaphoreRelease is ISR-safe in CMSIS-RTOS v2 / FreeRTOS */
+        osSemaphoreRelease(ButtonSemHandle);
+    }
+}
 /* USER CODE END 4 */
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM2 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM2)
+  {
+    HAL_IncTick();
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.
