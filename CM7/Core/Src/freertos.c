@@ -50,7 +50,21 @@
 
 /* Private variables ---------------------------------------------------------*/
 /* USER CODE BEGIN Variables */
+/* --- Per-task software watchdog ------------------------------------ */
+typedef struct {
+    volatile uint32_t last_checkin;   /* osKernelGetTickCount() stamp */
+    uint32_t          deadline_ms;
+} TaskWdg_t;
 
+TaskWdg_t taskWdg[2] = {
+    { .last_checkin = 0, .deadline_ms = 2000 },  /* slot 0 → ButtonTask */
+    { .last_checkin = 0, .deadline_ms = 4000 },  /* slot 1 → LEDTask    */
+};
+
+static inline void task_checkin(uint8_t id)
+{
+    taskWdg[id].last_checkin = osKernelGetTickCount();
+}
 /* USER CODE END Variables */
 /* Definitions for ButtonTask */
 osThreadId_t ButtonTaskHandle;
@@ -65,6 +79,13 @@ const osThreadAttr_t LEDTask_attributes = {
   .name = "LEDTask",
   .stack_size = 128 * 4,
   .priority = (osPriority_t) osPriorityBelowNormal7,
+};
+/* Definitions for MonitorTask */
+osThreadId_t MonitorTaskHandle;
+const osThreadAttr_t MonitorTask_attributes = {
+  .name = "MonitorTask",
+  .stack_size = 128 * 4,
+  .priority = (osPriority_t) osPriorityNormal2,
 };
 /* Definitions for ButtonSem */
 osSemaphoreId_t ButtonSemHandle;
@@ -87,6 +108,7 @@ void My_print(char *msg){
 
 void StartButtonTask(void *argument);
 void StartLEDTask(void *argument);
+void StartMonitorTask(void *argument);
 
 void MX_FREERTOS_Init(void); /* (MISRA C 2004 rule 8.1) */
 
@@ -130,6 +152,9 @@ void MX_FREERTOS_Init(void) {
   /* creation of LEDTask */
   LEDTaskHandle = osThreadNew(StartLEDTask, NULL, &LEDTask_attributes);
 
+  /* creation of MonitorTask */
+  MonitorTaskHandle = osThreadNew(StartMonitorTask, NULL, &MonitorTask_attributes);
+
   /* USER CODE BEGIN RTOS_THREADS */
   /* add threads, ... */
   /* USER CODE END RTOS_THREADS */
@@ -151,21 +176,25 @@ void StartButtonTask(void *argument)
 {
   /* USER CODE BEGIN StartButtonTask */
   /* Infinite loop */
+	  task_checkin(0); // Adding this so that the monitor task doestnt fire when t is 0
   for(;;)
   {
-	  osStatus_t status = osSemaphoreAcquire( ButtonSemHandle,5000);
+	  osStatus_t status = osSemaphoreAcquire( ButtonSemHandle,3000);
 
       if (status == osOK)
       {
-          HAL_IWDG_Refresh(&hiwdg1);          /* kick watchdog   */
-          osSemaphoreRelease(LEDSemHandle);          /* wake LED task   */
+    	  task_checkin(0);
+//          HAL_IWDG_Refresh(&hiwdg1);          /* kick watchdog   */
+          osSemaphoreRelease(LEDSemHandle);
+          My_print("Button triggered\r\n");
+          /* wake LED task   */
       }
 
       else{
     	  My_print("NoTrigger\r\n");
 
     	  while(1){
-    		  osDelay(1000);
+    		  osDelay(500);
     	  }
       }
 
@@ -184,9 +213,11 @@ void StartLEDTask(void *argument)
 {
   /* USER CODE BEGIN StartLEDTask */
   /* Infinite loop */
+	  task_checkin(1);
   for(;;)
   {
-      osSemaphoreAcquire(LEDSemHandle, osWaitForever);
+	  osStatus_t status = osSemaphoreAcquire(LEDSemHandle, 4000);
+      if(status == osOK){
 
       for (uint8_t i = 0; i < 5; i++)
       {
@@ -195,9 +226,67 @@ void StartLEDTask(void *argument)
           HAL_GPIO_WritePin(GPIOE,  GPIO_PIN_1, GPIO_PIN_RESET);
           osDelay(200);
       }
-
+      task_checkin(1);
+      }
+      else
+      {
+          My_print("LED timeout\r\n");
+          /* Don't checkin — let IWDG fire */
+          while(1)
+          {
+              osDelay(500);
+          }
+      }
   }
   /* USER CODE END StartLEDTask */
+}
+
+/* USER CODE BEGIN Header_StartMonitorTask */
+/**
+* @brief Function implementing the MonitorTask thread.
+* @param argument: Not used
+* @retval None
+*/
+/* USER CODE END Header_StartMonitorTask */
+void StartMonitorTask(void *argument)
+{
+  /* USER CODE BEGIN StartMonitorTask */
+  /* Infinite loop */
+    osDelay(500);
+    for(;;)
+      {
+          uint32_t now    = osKernelGetTickCount();
+          uint8_t  all_ok = 1;
+
+          for (uint8_t i = 0; i < 2; i++)
+          {
+              uint32_t elapsed = now - taskWdg[i].last_checkin;
+
+              if (elapsed > taskWdg[i].deadline_ms)
+              {
+                  all_ok = 0;
+
+//                  char buf[40];
+//                  snprintf(buf, sizeof(buf), "WDG: task%d expired %lums\r\n",
+//                           i, elapsed);
+//                  My_print(buf);
+
+                  /* Light error LED on PB14 */
+                  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, GPIO_PIN_SET);
+
+                  /* Stop kicking — IWDG will reset the system on its own */
+                  break;
+              }
+          }
+
+          if (all_ok)
+          {
+              HAL_IWDG_Refresh(&hiwdg1);   /* pet the hardware watchdog */
+          }
+
+          osDelay(500);   /* poll every 500 ms */
+      }
+  /* USER CODE END StartMonitorTask */
 }
 
 /* Private application code --------------------------------------------------*/
